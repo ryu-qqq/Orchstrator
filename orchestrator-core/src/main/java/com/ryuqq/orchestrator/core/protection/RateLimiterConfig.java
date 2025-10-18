@@ -5,46 +5,27 @@ package com.ryuqq.orchestrator.core.protection;
  *
  * <p>Rate Limiter의 동작을 제어하는 설정 정보입니다.</p>
  *
+ * <p>Java 21 record를 사용하여 불변성을 보장합니다.</p>
+ *
+ * @param permitsPerSecond 초당 허용 요청 수 (예: 100.0)
+ * @param maxBurstSize 버스트 허용량 (Token Bucket의 버킷 크기)
  * @author Orchestrator Team
  * @since 1.0.0
  */
-public class RateLimiterConfig {
-
-    private final double permitsPerSecond;
-    private final int maxBurstSize;
+public record RateLimiterConfig(double permitsPerSecond, int maxBurstSize) {
 
     /**
-     * Rate Limiter 설정 생성.
+     * Compact constructor with validation.
      *
-     * @param permitsPerSecond 초당 허용 요청 수 (예: 100.0)
-     * @param maxBurstSize 버스트 허용량 (Token Bucket의 버킷 크기)
+     * @throws IllegalArgumentException if permitsPerSecond is not positive
+     * @throws IllegalArgumentException if maxBurstSize is not positive
      */
-    public RateLimiterConfig(double permitsPerSecond, int maxBurstSize) {
+    public RateLimiterConfig {
         if (permitsPerSecond <= 0) {
             throw new IllegalArgumentException("permitsPerSecond must be positive");
         }
         if (maxBurstSize <= 0) {
             throw new IllegalArgumentException("maxBurstSize must be positive");
         }
-        this.permitsPerSecond = permitsPerSecond;
-        this.maxBurstSize = maxBurstSize;
-    }
-
-    /**
-     * 초당 허용 요청 수 조회.
-     *
-     * @return 초당 허용 요청 수
-     */
-    public double getPermitsPerSecond() {
-        return permitsPerSecond;
-    }
-
-    /**
-     * 버스트 허용량 조회.
-     *
-     * @return 버스트 허용량
-     */
-    public int getMaxBurstSize() {
-        return maxBurstSize;
     }
 }

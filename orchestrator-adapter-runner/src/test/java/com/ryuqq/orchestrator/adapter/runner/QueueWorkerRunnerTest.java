@@ -59,9 +59,7 @@ class QueueWorkerRunnerTest {
 
     @BeforeEach
     void setUp() {
-        config = new QueueWorkerConfig();
-        config.setMaxRetries(3);
-        config.setDlqEnabled(true);
+        config = new QueueWorkerConfig(); // Already has maxRetries=3 and dlqEnabled=true by default
 
         runner = new QueueWorkerRunner(bus, store, executor, config);
 
@@ -76,12 +74,21 @@ class QueueWorkerRunnerTest {
         testEnvelope = Envelope.now(testOpId, testCommand);
     }
 
+    /**
+     * pump() 호출 후 비동기 작업 완료를 대기하는 헬퍼 메서드.
+     * ThreadPool을 사용하므로 작업 완료를 기다려야 함.
+     */
+    private void pumpAndWait() throws InterruptedException {
+        runner.pump();
+        Thread.sleep(200); // 비동기 작업 완료 대기 (배치 처리 고려)
+    }
+
     // ============================================================
     // 1. Ok 처리: writeAhead → finalize 순서 보장
     // ============================================================
 
     @Test
-    void pump_Ok_처리_시_writeAhead_후_finalize_순서로_호출됨() {
+    void pump_Ok_처리_시_writeAhead_후_finalize_순서로_호출됨() throws InterruptedException {
         // given
         when(bus.dequeue(anyInt())).thenReturn(List.of(testEnvelope));
 
@@ -93,7 +100,7 @@ class QueueWorkerRunnerTest {
         }).when(executor).execute(testEnvelope);
 
         // when
-        runner.pump();
+        pumpAndWait();
 
         // then
         InOrder inOrder = inOrder(store, bus);
@@ -103,7 +110,7 @@ class QueueWorkerRunnerTest {
     }
 
     @Test
-    void pump_Ok_처리_시_finalize_실패해도_ACK_처리됨() {
+    void pump_Ok_처리_시_finalize_실패해도_ACK_처리됨() throws InterruptedException {
         // given
         when(bus.dequeue(anyInt())).thenReturn(List.of(testEnvelope));
 
@@ -118,7 +125,7 @@ class QueueWorkerRunnerTest {
             .finalize(testOpId, OperationState.COMPLETED);
 
         // when
-        runner.pump();
+        pumpAndWait();
 
         // then
         verify(store).writeAhead(eq(testOpId), any(Ok.class));
@@ -131,7 +138,7 @@ class QueueWorkerRunnerTest {
     // ============================================================
 
     @Test
-    void pump_Retry_처리_시_RetryBudget_남아있으면_재게시됨() {
+    void pump_Retry_처리_시_RetryBudget_남아있으면_재게시됨() throws InterruptedException {
         // given
         when(bus.dequeue(anyInt())).thenReturn(List.of(testEnvelope));
 
@@ -143,24 +150,24 @@ class QueueWorkerRunnerTest {
         }).when(executor).execute(testEnvelope);
 
         // when
-        runner.pump();
+        pumpAndWait();
 
         // then
         ArgumentCaptor<Long> delayCaptor = ArgumentCaptor.forClass(Long.class);
         verify(bus).publish(eq(testEnvelope), delayCaptor.capture());
 
-        // Backoff 적용 확인 (attemptCount=1 → BASE_DELAY * 2^1 = 2000ms + jitter)
-        // jitter = 0 ~ 2000 * 0.1 = 0 ~ 200ms
+        // Backoff 적용 확인 (attemptCount=1 → BASE_DELAY * 2^(1-1) = 1000ms + jitter)
+        // jitter = 0 ~ 1000 * 0.1 = 0 ~ 100ms
         long delay = delayCaptor.getValue();
-        assertThat(delay).isGreaterThanOrEqualTo(2000);  // 최소 2초
-        assertThat(delay).isLessThan(2200);              // 2초 + 10% jitter (200ms)
+        assertThat(delay).isGreaterThanOrEqualTo(1000);  // 최소 1초
+        assertThat(delay).isLessThan(1100);              // 1초 + 10% jitter (100ms)
 
         verify(bus).ack(testEnvelope);
         verify(store, never()).finalize(any(), any()); // finalize 호출 안 됨
     }
 
     @Test
-    void pump_Retry_처리_시_RetryBudget_소진되면_finalize_FAILED_호출됨() {
+    void pump_Retry_처리_시_RetryBudget_소진되면_finalize_FAILED_호출됨() throws InterruptedException {
         // given
         when(bus.dequeue(anyInt())).thenReturn(List.of(testEnvelope));
 
@@ -173,7 +180,7 @@ class QueueWorkerRunnerTest {
         }).when(executor).execute(testEnvelope);
 
         // when
-        runner.pump();
+        pumpAndWait();
 
         // then
         verify(bus, never()).publish(any(), anyLong()); // 재게시 안 됨
@@ -186,7 +193,7 @@ class QueueWorkerRunnerTest {
     // ============================================================
 
     @Test
-    void pump_Fail_처리_시_즉시_finalize_FAILED_호출됨() {
+    void pump_Fail_처리_시_즉시_finalize_FAILED_호출됨() throws InterruptedException {
         // given
         when(bus.dequeue(anyInt())).thenReturn(List.of(testEnvelope));
 
@@ -198,7 +205,7 @@ class QueueWorkerRunnerTest {
         }).when(executor).execute(testEnvelope);
 
         // when
-        runner.pump();
+        pumpAndWait();
 
         // then
         verify(store).finalize(testOpId, OperationState.FAILED);
@@ -207,10 +214,10 @@ class QueueWorkerRunnerTest {
     }
 
     @Test
-    void pump_Fail_처리_시_DLQ_비활성화_상태면_DLQ_전송_안_됨() {
+    void pump_Fail_처리_시_DLQ_비활성화_상태면_DLQ_전송_안_됨() throws InterruptedException {
         // given
-        config.setDlqEnabled(false);
-        runner = new QueueWorkerRunner(bus, store, executor, config);
+        QueueWorkerConfig configWithDlqDisabled = config.withDlqEnabled(false);
+        runner = new QueueWorkerRunner(bus, store, executor, configWithDlqDisabled);
 
         when(bus.dequeue(anyInt())).thenReturn(List.of(testEnvelope));
 
@@ -222,7 +229,7 @@ class QueueWorkerRunnerTest {
         }).when(executor).execute(testEnvelope);
 
         // when
-        runner.pump();
+        pumpAndWait();
 
         // then
         verify(store).finalize(testOpId, OperationState.FAILED);
@@ -235,16 +242,16 @@ class QueueWorkerRunnerTest {
     // ============================================================
 
     @Test
-    void pump_처리_중_예외_발생_시_NACK_호출되고_예외_전파됨() {
+    void pump_처리_중_예외_발생_시_NACK_호출됨() throws InterruptedException {
         // given
         when(bus.dequeue(anyInt())).thenReturn(List.of(testEnvelope));
         doThrow(new RuntimeException("Executor error")).when(executor).execute(testEnvelope);
 
-        // when & then
-        assertThatThrownBy(() -> runner.pump())
-            .isInstanceOf(RuntimeException.class)
-            .hasMessageContaining("Failed to process envelope");
+        // when
+        pumpAndWait();
 
+        // then: 비동기 실행으로 인해 예외는 워커 스레드에서 발생하고,
+        // RuntimeException이 throw되어 processEnvelope의 catch 블록에서 NACK 처리됨
         verify(bus).nack(testEnvelope);
         verify(bus, never()).ack(any());
     }
@@ -254,7 +261,7 @@ class QueueWorkerRunnerTest {
     // ============================================================
 
     @Test
-    void pump_여러_Envelope_배치_처리_가능() {
+    void pump_여러_Envelope_배치_처리_가능() throws InterruptedException {
         // given
         OpId opId1 = OpId.of("op-1");
         OpId opId2 = OpId.of("op-2");
@@ -273,7 +280,7 @@ class QueueWorkerRunnerTest {
         }).when(executor).execute(any());
 
         // when
-        runner.pump();
+        pumpAndWait();
 
         // then
         verify(executor, times(2)).execute(any());

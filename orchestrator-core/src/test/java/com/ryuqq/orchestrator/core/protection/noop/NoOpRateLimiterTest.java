@@ -55,8 +55,8 @@ class NoOpRateLimiterTest {
 
         // then
         assertNotNull(config);
-        assertEquals(Double.MAX_VALUE, config.getPermitsPerSecond());
-        assertEquals(Integer.MAX_VALUE, config.getMaxBurstSize());
+        assertEquals(Double.MAX_VALUE, config.permitsPerSecond());
+        assertEquals(Integer.MAX_VALUE, config.maxBurstSize());
     }
 
     @Test

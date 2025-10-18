@@ -79,8 +79,8 @@ class NoOpBulkheadTest {
 
         // then
         assertNotNull(config);
-        assertEquals(Integer.MAX_VALUE, config.getMaxConcurrentCalls());
-        assertEquals(0, config.getMaxWaitDurationMs());
+        assertEquals(Integer.MAX_VALUE, config.maxConcurrentCalls());
+        assertEquals(0, config.maxWaitDurationMs());
     }
 
     @Test

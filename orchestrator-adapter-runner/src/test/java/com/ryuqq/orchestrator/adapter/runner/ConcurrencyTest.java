@@ -69,17 +69,11 @@ class ConcurrencyTest {
 
     @BeforeEach
     void setUp() {
-        queueConfig = new QueueWorkerConfig();
-        queueConfig.setMaxRetries(3);
-        queueConfig.setDlqEnabled(true);
+        queueConfig = new QueueWorkerConfig(); // Already has maxRetries=3 and dlqEnabled=true by default
 
-        finalizerConfig = new FinalizerConfig();
-        finalizerConfig.setBatchSize(100);
+        finalizerConfig = new FinalizerConfig().withBatchSize(100);
 
-        reaperConfig = new ReaperConfig();
-        reaperConfig.setTimeoutThresholdMs(600000);
-        reaperConfig.setBatchSize(50);
-        reaperConfig.setDefaultStrategy(ReconcileStrategy.FAIL);
+        reaperConfig = new ReaperConfig(); // Already has timeoutThresholdMs=600000, batchSize=50, defaultStrategy=FAIL by default
     }
 
     // ============================================================
@@ -200,8 +194,7 @@ class ConcurrencyTest {
             }
         });
 
-        when(store.getEnvelope(opId1)).thenReturn(createTestEnvelope(opId1));
-        when(store.getEnvelope(opId2)).thenReturn(createTestEnvelope(opId2));
+        // FAIL 전략에서는 getEnvelope 호출 안 함 (불필요한 stubbing 제거)
 
         // when: 두 개의 Reaper 인스턴스가 동시에 scan() 실행
         Reaper reaper1 = new Reaper(bus, store, reaperConfig);

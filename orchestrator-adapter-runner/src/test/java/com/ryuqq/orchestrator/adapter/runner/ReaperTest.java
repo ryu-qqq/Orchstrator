@@ -49,10 +49,7 @@ class ReaperTest {
 
     @BeforeEach
     void setUp() {
-        config = new ReaperConfig();
-        config.setTimeoutThresholdMs(600000); // 10분
-        config.setBatchSize(50);
-        config.setDefaultStrategy(ReconcileStrategy.FAIL);
+        config = new ReaperConfig(); // Already has timeoutThresholdMs=600000, batchSize=50, defaultStrategy=FAIL by default
 
         reaper = new Reaper(bus, store, config);
     }
@@ -64,8 +61,8 @@ class ReaperTest {
     @Test
     void scan_RETRY_전략이면_장기_IN_PROGRESS_작업을_재게시함() {
         // given
-        config.setDefaultStrategy(ReconcileStrategy.RETRY);
-        reaper = new Reaper(bus, store, config);
+        ReaperConfig configWithRetry = config.withDefaultStrategy(ReconcileStrategy.RETRY);
+        reaper = new Reaper(bus, store, configWithRetry);
 
         OpId opId = OpId.of("stuck-op-1");
         Envelope envelope = createTestEnvelope(opId);
@@ -89,8 +86,8 @@ class ReaperTest {
     @Test
     void scan_RETRY_전략_시_여러_작업_재게시_가능() {
         // given
-        config.setDefaultStrategy(ReconcileStrategy.RETRY);
-        reaper = new Reaper(bus, store, config);
+        ReaperConfig configWithRetry = config.withDefaultStrategy(ReconcileStrategy.RETRY);
+        reaper = new Reaper(bus, store, configWithRetry);
 
         OpId opId1 = OpId.of("stuck-op-1");
         OpId opId2 = OpId.of("stuck-op-2");
@@ -123,17 +120,15 @@ class ReaperTest {
     void scan_FAIL_전략이면_장기_IN_PROGRESS_작업을_FAILED로_종료함() {
         // given (default strategy = FAIL)
         OpId opId = OpId.of("stuck-op-1");
-        Envelope envelope = createTestEnvelope(opId);
 
         when(store.scanInProgress(600000, 50)).thenReturn(List.of(opId));
-        when(store.getEnvelope(opId)).thenReturn(envelope);
 
         // when
         reaper.scan();
 
         // then
         verify(store).scanInProgress(600000, 50);
-        verify(store).getEnvelope(opId);
+        verify(store, never()).getEnvelope(any()); // FAIL 전략은 envelope 조회 안 함
         verify(store).finalize(opId, OperationState.FAILED);
         verify(bus, never()).publish(any(), anyLong());
     }
@@ -146,9 +141,6 @@ class ReaperTest {
         OpId opId3 = OpId.of("stuck-op-3");
 
         when(store.scanInProgress(600000, 50)).thenReturn(List.of(opId1, opId2, opId3));
-        when(store.getEnvelope(opId1)).thenReturn(createTestEnvelope(opId1));
-        when(store.getEnvelope(opId2)).thenReturn(createTestEnvelope(opId2));
-        when(store.getEnvelope(opId3)).thenReturn(createTestEnvelope(opId3));
 
         // when
         reaper.scan();
@@ -157,6 +149,7 @@ class ReaperTest {
         verify(store).finalize(opId1, OperationState.FAILED);
         verify(store).finalize(opId2, OperationState.FAILED);
         verify(store).finalize(opId3, OperationState.FAILED);
+        verify(store, never()).getEnvelope(any()); // FAIL 전략은 envelope 조회 안 함
         verify(bus, never()).publish(any(), anyLong());
     }
 
@@ -167,8 +160,8 @@ class ReaperTest {
     @Test
     void scan_설정된_타임아웃_임계값으로_scanInProgress_호출됨() {
         // given
-        config.setTimeoutThresholdMs(1800000); // 30분
-        reaper = new Reaper(bus, store, config);
+        ReaperConfig configWith30MinTimeout = config.withTimeoutThresholdMs(1800000); // 30분
+        reaper = new Reaper(bus, store, configWith30MinTimeout);
 
         when(store.scanInProgress(1800000, 50)).thenReturn(List.of());
 
@@ -182,8 +175,8 @@ class ReaperTest {
     @Test
     void scan_배치_크기_설정대로_scanInProgress_호출됨() {
         // given
-        config.setBatchSize(100);
-        reaper = new Reaper(bus, store, config);
+        ReaperConfig configWithBatch100 = config.withBatchSize(100);
+        reaper = new Reaper(bus, store, configWithBatch100);
 
         when(store.scanInProgress(600000, 100)).thenReturn(List.of());
 
@@ -224,31 +217,32 @@ class ReaperTest {
     }
 
     @Test
-    void scan_getEnvelope_실패해도_다른_작업_계속_처리됨() {
-        // given
+    void scan_FAIL_전략_finalize_실패해도_다른_작업_계속_처리됨() {
+        // given (default strategy = FAIL)
         OpId opId1 = OpId.of("stuck-op-1");
         OpId opId2 = OpId.of("stuck-op-2");
         OpId opId3 = OpId.of("stuck-op-3");
 
         when(store.scanInProgress(600000, 50)).thenReturn(List.of(opId1, opId2, opId3));
-        when(store.getEnvelope(opId1)).thenReturn(createTestEnvelope(opId1));
-        when(store.getEnvelope(opId2)).thenThrow(new RuntimeException("Not found"));
-        when(store.getEnvelope(opId3)).thenReturn(createTestEnvelope(opId3));
+
+        // opId2 finalize 실패 시뮬레이션
+        doThrow(new RuntimeException("DB error"))
+            .when(store).finalize(eq(opId2), any());
 
         // when
         reaper.scan();
 
         // then
         verify(store).finalize(opId1, OperationState.FAILED);
-        verify(store, never()).finalize(eq(opId2), any()); // opId2는 스킵됨
+        verify(store).finalize(opId2, OperationState.FAILED); // 시도는 했음
         verify(store).finalize(opId3, OperationState.FAILED); // 계속 진행됨
     }
 
     @Test
     void scan_RETRY_전략_시_publish_실패해도_다른_작업_계속_처리됨() {
         // given
-        config.setDefaultStrategy(ReconcileStrategy.RETRY);
-        reaper = new Reaper(bus, store, config);
+        ReaperConfig configWithRetry = config.withDefaultStrategy(ReconcileStrategy.RETRY);
+        reaper = new Reaper(bus, store, configWithRetry);
 
         OpId opId1 = OpId.of("stuck-op-1");
         OpId opId2 = OpId.of("stuck-op-2");

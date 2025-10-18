@@ -46,8 +46,7 @@ class FinalizerTest {
 
     @BeforeEach
     void setUp() {
-        config = new FinalizerConfig();
-        config.setBatchSize(100);
+        config = new FinalizerConfig().withBatchSize(100);
         finalizer = new Finalizer(store, config);
     }
 
